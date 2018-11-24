@@ -63,26 +63,33 @@ defmodule ExSync.Config do
     src_default_dirs() ++ src_addition_dirs()
   end
 
-  defp src_default_dirs do
+  defp src_default_dirs(deps_project \\ false) do
     if Mix.Project.umbrella?() do
       for %Mix.Dep{app: app, opts: opts} <- Mix.Dep.Umbrella.loaded() do
         Mix.Project.in_project(app, opts[:path], fn _ -> src_default_dirs() end)
       end
     else
+
       dep_paths =
         Mix.Dep.cached()
         |> Enum.filter(fn dep -> dep.opts[:path] != nil end)
         |> Enum.map(fn %Mix.Dep{app: app, opts: opts} ->
-          Mix.Project.in_project(app, opts[:path], fn _ -> src_default_dirs() end)
+          Mix.Project.in_project(app, opts[:path], fn _ -> src_default_dirs(true) end)
         end)
 
       self_paths =
-        Mix.Project.config()
-        |> Keyword.take([:elixirc_paths, :erlc_paths, :erlc_include_path])
-        |> Keyword.values()
-        |> List.flatten()
-        |> Enum.map(&Path.join(app_source_dir(), &1))
-        |> Enum.filter(&File.exists?/1)
+        if !deps_project && exclude_default_src_paths?() do
+          project_name = Keyword.get(Mix.Project.config(), :app, :unknown)
+          Logger.info("exsync excluding default src paths in project '#{project_name}'")
+          []
+        else
+          Mix.Project.config()
+          |> Keyword.take([:elixirc_paths, :erlc_paths, :erlc_include_path])
+          |> Keyword.values()
+          |> List.flatten()
+          |> Enum.map(&Path.join(app_source_dir(), &1))
+          |> Enum.filter(&File.exists?/1)
+        end
 
       [self_paths | dep_paths]
     end
@@ -91,9 +98,27 @@ defmodule ExSync.Config do
   end
 
   defp src_addition_dirs do
-    Application.get_env(:exsync, :addition_dirs, [])
-    |> Enum.map(&Path.join(app_source_dir(), &1))
-    |> Enum.filter(&File.exists?/1)
+    dirs = Application.get_env(:exsync, :addition_dirs, [])
+
+    non_relative_dirs = Enum.filter(dirs, fn path -> Path.type(path) != :relative end)
+
+    case non_relative_dirs do
+      [] ->
+        :ok
+      [_ | _] ->
+        Logger.error("exsync's addition_dirs need to be relative paths, got #{inspect non_relative_dirs}")
+    end
+
+    dirs = Enum.map(dirs, &Path.join(app_source_dir(), &1))
+
+    # NOTE, could use &File.dir?/1, but it seems like normal files are alright too
+    case Enum.split_with(dirs, &File.exists?/1) do
+      {dirs, []} ->
+        dirs
+      {dirs, invalid_paths = [_ | _]} ->
+        Logger.error("exsync's addition_dirs need to exist, #{inspect invalid_paths} don't exist")
+        dirs
+    end
   end
 
   def src_extensions do
@@ -102,6 +127,10 @@ defmodule ExSync.Config do
       :extensions,
       [".erl", ".hrl", ".ex", ".eex"] ++ Application.get_env(:exsync, :extra_extensions, [])
     )
+  end
+
+  def exclude_default_src_paths? do
+    Application.get_env(:exsync, :exclude_default_src_paths?, false)
   end
 
   def application do

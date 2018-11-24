@@ -1,3 +1,15 @@
+@nietaki's selective-reloading branch note
+==========================================
+
+This branch allows you to only selectively reload files in your project:
+
+```elixir
+config :exsync,
+  extra_extensions: [".js", ".css"],
+  exclude_default_src_paths?: true,
+  addition_dirs: ["lib/reloader/www/", "lib/reloader/www.ex", "lib/reloader/repo.ex"]
+```
+
 ExSync
 ======
 
